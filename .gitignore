@@ -1,0 +1,44 @@
+# ==============================
+# PDF FLIPBOOK AGENT
+# ==============================
+
+# Uploaded PDFs
+uploads/*
+!uploads/.gitkeep
+
+# Generated flipbook pages
+generated/*
+!generated/.gitkeep
+
+temp/*
+!temp/.gitkeep
+
+# Generated images
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.pdf
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

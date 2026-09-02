@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+```
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>PDF Flipbook Agent</title>
+
+<link
+    rel="stylesheet"
+    href="/static/css/style.css"
+>
+```
+
+</head>
+
+<body class="landing-page">
+
+<main class="app">
+
+```
+<!-- =====================================================
+     HERO
+====================================================== -->
+
+<section class="hero">
+
+    <div class="logo">
+        📖
+    </div>
+
+    <h1>
+        PDF Flipbook Agent
+    </h1>
+
+    <p>
+        Turn your PDF into an interactive 3D flipbook.
+    </p>
+
+</section>
+
+
+<!-- =====================================================
+     UPLOAD CARD
+====================================================== -->
+
+<section
+    class="upload-card"
+    id="uploadCard"
+>
+
+    <div class="upload-icon">
+        📄
+    </div>
+
+    <h2>
+        Upload your PDF
+    </h2>
+
+    <p>
+        Select a PDF to create your flipbook.
+    </p>
+
+
+    <label
+        for="pdfInput"
+        class="upload-button"
+    >
+        Choose PDF
+    </label>
+
+
+    <input
+        type="file"
+        id="pdfInput"
+        accept=".pdf,application/pdf"
+        hidden
+    >
+
+
+    <div
+        class="file-name"
+        id="fileName"
+    ></div>
+
+</section>
+
+
+<!-- =====================================================
+     PROGRESS CARD
+====================================================== -->
+
+<section
+    class="progress-card hidden"
+    id="progressCard"
+>
+
+    <div class="loader"></div>
+
+    <h2>
+        Creating your flipbook...
+    </h2>
+
+    <p id="progressText">
+        Uploading PDF...
+    </p>
+
+
+    <div class="progress-bar">
+
+        <div
+            class="progress-fill"
+            id="progressFill"
+        ></div>
+
+    </div>
+
+</section>
+
+
+<!-- =====================================================
+     RESULT CARD
+====================================================== -->
+
+<section
+    class="result-card hidden"
+    id="resultCard"
+>
+
+    <div class="success-icon">
+        ✓
+    </div>
+
+    <h2>
+        Your Flipbook is Ready
+    </h2>
+
+    <p id="resultInfo"></p>
+
+    <div class="result-actions">
+
+        <button
+            class="action-button primary"
+            id="openFlipbook"
+            type="button"
+        >
+            Open Flipbook
+        </button>
+
+        <button
+            class="action-button"
+            id="downloadFlipbook"
+            type="button"
+        >
+            Download Flipbook
+        </button>
+
+        <button
+            class="action-button"
+            id="copyShareLink"
+            type="button"
+        >
+            Copy Share Link
+        </button>
+
+        <button
+            class="action-button secondary"
+            id="backToUpload"
+            type="button"
+        >
+            Back to Pages
+        </button>
+
+    </div>
+
+</section>
+
+
+<!-- =====================================================
+     ERROR
+====================================================== -->
+
+<div
+    class="error-message hidden"
+    id="errorMessage"
+></div>
+```
+
+</main>
+
+<script>
+
+    const pdfInput =
+        document.getElementById("pdfInput");
+
+    const uploadCard =
+        document.getElementById("uploadCard");
+
+    const progressCard =
+        document.getElementById("progressCard");
+
+    const resultCard =
+        document.getElementById("resultCard");
+
+    const errorMessage =
+        document.getElementById("errorMessage");
+
+    const fileName =
+        document.getElementById("fileName");
+
+    const progressText =
+        document.getElementById("progressText");
+
+    const progressFill =
+        document.getElementById("progressFill");
+
+    const resultInfo =
+        document.getElementById("resultInfo");
+
+    const openFlipbook =
+        document.getElementById("openFlipbook");
+
+    const downloadFlipbook =
+        document.getElementById("downloadFlipbook");
+
+    const copyShareLink =
+        document.getElementById("copyShareLink");
+
+    const backToUpload =
+        document.getElementById("backToUpload");
+
+    const returnTargetKey =
+        "pdfFlipbookReturnTarget";
+
+    const lastJobKey =
+        "pdfFlipbookLastJobId";
+
+
+    /*
+     * This stores the job ID returned by FastAPI.
+     */
+    let currentJobId = null;
+    let isDownloading = false;
+    let isCopyingLink = false;
+
+    function getShareUrl() {
+
+        if (!currentJobId) {
+            return "";
+        }
+
+        const returnUrl = `${window.location.origin}${window.location.pathname}`;
+
+        return `${window.location.origin}/static/flipbook.html?job_id=${encodeURIComponent(currentJobId)}&return_to=${encodeURIComponent(returnUrl)}`;
+
+    }
+
+    function restoreLastJobState() {
+
+        const sessionJobId = sessionStorage.getItem(lastJobKey);
+
+        if (!sessionJobId) {
+            return;
+        }
+
+        currentJobId = sessionJobId;
+
+        uploadCard.classList.add("hidden");
+        progressCard.classList.add("hidden");
+        resultCard.classList.remove("hidden");
+        resultInfo.textContent = "Ready to open • Download • Share";
+
+    }
+
+    function rememberJobState() {
+
+        if (!currentJobId) {
+            return;
+        }
+
+        sessionStorage.setItem(lastJobKey, currentJobId);
+
+    }
+
+
+    /* =====================================================
+       FILE SELECTED
+    ====================================================== */
+
+    pdfInput.addEventListener(
+        "change",
+        async function () {
+
+            const file =
+                pdfInput.files[0];
+
+            if (!file) {
+                return;
+            }
+
+
+            /* ---------------------------------------------
+               Validate PDF
+            --------------------------------------------- */
+
+            if (
+                file.type !== "application/pdf" &&
+                !file.name.toLowerCase().endsWith(".pdf")
+            ) {
+
+                showError(
+                    "Please select a PDF file."
+                );
+
+                pdfInput.value = "";
+
+                return;
+            }
+
+
+            /* ---------------------------------------------
+               Reset previous state
+            --------------------------------------------- */
+
+            currentJobId = null;
+
+            errorMessage.classList.add(
+                "hidden"
+            );
+
+            fileName.textContent =
+                file.name;
+
+
+            uploadCard.classList.add(
+                "hidden"
+            );
+
+            resultCard.classList.add(
+                "hidden"
+            );
+
+            progressCard.classList.remove(
+                "hidden"
+            );
+
+
+            setProgress(
+                10,
+                "Uploading PDF..."
+            );
+
+
+            /* ---------------------------------------------
+               FormData
+            --------------------------------------------- */
+
+            const formData =
+                new FormData();
+
+            formData.append(
+                "file",
+                file
+            );
+
+
+            try {
+
+                setProgress(
+                    20,
+                    "Uploading PDF..."
+                );
+
+
+                /* -----------------------------------------
+                   Send PDF to FastAPI
+                ----------------------------------------- */
+
+                const response =
+                    await fetch(
+                        "/api/upload",
+                        {
+                            method: "POST",
+                            body: formData
+                        }
+                    );
+
+
+                const data =
+                    await response.json();
+
+
+                /* -----------------------------------------
+                   Validate response
+                ----------------------------------------- */
+
+                if (
+                    !response.ok ||
+                    !data.success
+                ) {
+
+                    throw new Error(
+                        data.message ||
+                        "Unable to create flipbook."
+                    );
+
+                }
+
+
+                /* -----------------------------------------
+                   IMPORTANT
+
+                   Save the job ID returned by FastAPI.
+                ----------------------------------------- */
+
+                currentJobId =
+                    data.job_id;
+
+                rememberJobState();
+
+
+                if (!currentJobId) {
+
+                    throw new Error(
+                        "The server did not return a flipbook job ID."
+                    );
+
+                }
+
+
+                setProgress(
+                    70,
+                    "Rendering PDF pages..."
+                );
+
+
+                await new Promise(
+                    resolve =>
+                        setTimeout(
+                            resolve,
+                            500
+                        )
+                );
+
+
+                setProgress(
+                    100,
+                    "Flipbook created!"
+                );
+
+
+                await new Promise(
+                    resolve =>
+                        setTimeout(
+                            resolve,
+                            400
+                        )
+                );
+
+
+                /* -----------------------------------------
+                   Show result
+                ----------------------------------------- */
+
+                progressCard.classList.add(
+                    "hidden"
+                );
+
+                resultCard.classList.remove(
+                    "hidden"
+                );
+
+
+                resultInfo.textContent =
+                    `${data.page_count} pages • High Resolution`;
+
+
+            } catch (error) {
+
+                console.error(
+                    "Upload error:",
+                    error
+                );
+
+
+                currentJobId = null;
+
+
+                progressCard.classList.add(
+                    "hidden"
+                );
+
+                uploadCard.classList.remove(
+                    "hidden"
+                );
+
+
+                showError(
+                    error.message ||
+                    "Something went wrong while creating the flipbook."
+                );
+
+            }
+
+        }
+    );
+
+
+    /* =====================================================
+       OPEN FLIPBOOK
+    ====================================================== */
+
+    openFlipbook.addEventListener(
+        "click",
+        function () {
+
+            if (!currentJobId) {
+
+                showError(
+                    "Flipbook job was not found."
+                );
+
+                return;
+            }
+
+            const returnUrl = `${window.location.origin}${window.location.pathname}`;
+            const url =
+                `${window.location.origin}/static/flipbook.html?job_id=${encodeURIComponent(currentJobId)}&return_to=${encodeURIComponent(returnUrl)}`;
+
+            sessionStorage.setItem(returnTargetKey, returnUrl);
+            sessionStorage.setItem(lastJobKey, currentJobId);
+
+            window.open(
+                url,
+                "_blank",
+                "noopener,noreferrer"
+            );
+
+        }
+    );
+
+
+    /* =====================================================
+       DOWNLOAD FLIPBOOK
+    ====================================================== */
+
+    downloadFlipbook.addEventListener(
+        "click",
+        async function () {
+
+            if (!currentJobId) {
+
+                showError(
+                    "Flipbook job was not found."
+                );
+
+                return;
+            }
+
+            if (isDownloading) {
+                return;
+            }
+
+            isDownloading = true;
+            const originalText =
+                downloadFlipbook.textContent;
+
+            downloadFlipbook.textContent =
+                "Preparing Download...";
+            downloadFlipbook.disabled = true;
+
+            try {
+
+                const response =
+                    await fetch(
+                        `/api/job/${encodeURIComponent(currentJobId)}/download`
+                    );
+
+                if (!response.ok) {
+
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(
+                        errorData.message ||
+                        "Could not prepare the flipbook download."
+                    );
+
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+
+                anchor.href = url;
+                anchor.download = `flipbook-${currentJobId}.zip`;
+
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+
+                window.URL.revokeObjectURL(url);
+
+                downloadFlipbook.textContent = "Downloading...";
+
+                setTimeout(() => {
+                    downloadFlipbook.textContent = originalText;
+                    downloadFlipbook.disabled = false;
+                    isDownloading = false;
+                }, 700);
+
+            } catch (error) {
+
+                console.error(
+                    "Download error:",
+                    error
+                );
+
+                downloadFlipbook.textContent = originalText;
+                downloadFlipbook.disabled = false;
+                isDownloading = false;
+
+                showError(
+                    error.message ||
+                    "Download failed. Please try again."
+                );
+
+            }
+
+        }
+    );
+
+
+    /* =====================================================
+       COPY SHARE LINK
+    ====================================================== */
+
+    copyShareLink.addEventListener(
+        "click",
+        async function () {
+
+            if (!currentJobId) {
+
+                showError(
+                    "Flipbook job was not found."
+                );
+
+                return;
+            }
+
+            if (isCopyingLink) {
+                return;
+            }
+
+            isCopyingLink = true;
+
+            const originalText =
+                copyShareLink.textContent;
+
+            copyShareLink.textContent = "Copying...";
+            copyShareLink.disabled = true;
+
+            const shareUrl = getShareUrl();
+
+            try {
+
+                if (
+                    navigator.clipboard &&
+                    window.isSecureContext
+                ) {
+
+                    await navigator.clipboard.writeText(shareUrl);
+
+                } else {
+
+                    const tempInput = document.createElement("textarea");
+                    tempInput.value = shareUrl;
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    document.execCommand("copy");
+                    tempInput.remove();
+
+                }
+
+                copyShareLink.textContent = "✓ Link Copied";
+
+                setTimeout(() => {
+                    copyShareLink.textContent = originalText;
+                    copyShareLink.disabled = false;
+                    isCopyingLink = false;
+                }, 1400);
+
+            } catch (error) {
+
+                console.warn(
+                    "Clipboard copy failed:",
+                    error
+                );
+
+                copyShareLink.textContent = originalText;
+                copyShareLink.disabled = false;
+                isCopyingLink = false;
+
+                showError(
+                    `Copy failed. Use this link manually: ${shareUrl}`
+                );
+
+            }
+
+        }
+    );
+
+
+    /* =====================================================
+       BACK TO UPLOAD
+    ====================================================== */
+
+    backToUpload.addEventListener(
+        "click",
+        function () {
+
+            currentJobId = null;
+
+            resultCard.classList.add("hidden");
+            progressCard.classList.add("hidden");
+            uploadCard.classList.remove("hidden");
+
+            errorMessage.classList.add("hidden");
+            pdfInput.value = "";
+            fileName.textContent = "";
+
+            sessionStorage.removeItem(lastJobKey);
+
+        }
+    );
+
+    restoreLastJobState();
+
+
+    /* =====================================================
+       PROGRESS
+    ====================================================== */
+
+    function setProgress(
+        percentage,
+        message
+    ) {
+
+        progressFill.style.width =
+            `${percentage}%`;
+
+        progressText.textContent =
+            message;
+
+    }
+
+
+    /* =====================================================
+       ERROR
+    ====================================================== */
+
+    function showError(
+        message
+    ) {
+
+        errorMessage.textContent =
+            message;
+
+        errorMessage.classList.remove(
+            "hidden"
+        );
+
+    }
+
+</script>
+
+</body>
+
+</html>

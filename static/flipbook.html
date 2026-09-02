@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+```
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>Flipbook</title>
+
+<link
+    rel="stylesheet"
+    href="/static/css/style.css"
+>
+```
+
+</head>
+
+<body>
+
+```
+<!-- =====================================================
+     TOP BAR
+====================================================== -->
+
+<header class="topbar">
+
+    <div class="brand">
+
+        <span class="brand-icon">
+            📖
+        </span>
+
+        <span id="bookTitle">
+            Flipbook
+        </span>
+
+    </div>
+
+
+    <div class="top-actions">
+
+        <button
+            id="zoomOut"
+            class="tool-button"
+            title="Zoom out"
+        >
+            −
+        </button>
+
+
+        <span
+            id="zoomValue"
+            class="zoom-value"
+        >
+            100%
+        </span>
+
+
+        <button
+            id="zoomIn"
+            class="tool-button"
+            title="Zoom in"
+        >
+            +
+        </button>
+
+
+        <button
+            id="backToPagesButton"
+            class="tool-button"
+            title="Back to pages"
+        >
+            ↩
+        </button>
+
+        <button
+            id="fullscreenButton"
+            class="tool-button"
+            title="Fullscreen"
+        >
+            ⛶
+        </button>
+
+    </div>
+
+</header>
+
+
+<!-- =====================================================
+     VIEWER
+====================================================== -->
+
+<main
+    class="viewer"
+    id="viewer"
+>
+
+    <button
+        id="previousButton"
+        class="navigation-button previous"
+        aria-label="Previous page"
+    >
+        ‹
+    </button>
+
+
+    <div
+        class="book-stage"
+        id="bookStage"
+    >
+
+        <div
+            class="flipbook"
+            id="book"
+        ></div>
+
+    </div>
+
+
+    <button
+        id="nextButton"
+        class="navigation-button next"
+        aria-label="Next page"
+    >
+        ›
+    </button>
+
+</main>
+
+
+<!-- =====================================================
+     BOTTOM CONTROLS
+====================================================== -->
+
+<footer class="controls">
+
+    <button
+        id="firstButton"
+        class="control-button"
+        title="First page"
+    >
+        ⏮
+    </button>
+
+
+    <button
+        id="previousBottom"
+        class="control-button"
+        title="Previous page"
+    >
+        ←
+    </button>
+
+
+    <div class="page-info">
+
+        <span id="currentPage">
+            1
+        </span>
+
+        <span>
+            /
+        </span>
+
+        <span id="totalPages">
+            1
+        </span>
+
+    </div>
+
+
+    <button
+        id="nextBottom"
+        class="control-button"
+        title="Next page"
+    >
+        →
+    </button>
+
+
+    <button
+        id="lastButton"
+        class="control-button"
+        title="Last page"
+    >
+        ⏭
+    </button>
+
+</footer>
+
+
+<!-- =====================================================
+     LOADING
+====================================================== -->
+
+<div
+    id="loading"
+    class="loading"
+>
+
+    <div class="loading-spinner"></div>
+
+    <p>
+        Preparing your flipbook...
+    </p>
+
+</div>
+
+
+<!-- =====================================================
+     JQUERY
+
+     IMPORTANT:
+     Your actual file is jquery.js
+====================================================== -->
+
+<script
+    src="/static/js/jquery.js"
+></script>
+
+
+<!-- =====================================================
+     TURN.JS
+====================================================== -->
+
+<script
+    src="/static/js/turn.js"
+></script>
+
+
+<!-- =====================================================
+     FLIPBOOK APPLICATION
+====================================================== -->
+
+<script
+    src="/static/js/flipbook.js"
+></script>
+```
+
+</body>
+
+</html>
