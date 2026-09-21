@@ -69,6 +69,20 @@
         Select a PDF to create your flipbook.
     </p>
 
+    <div class="title-field">
+        <label for="flipbookTitleInput">
+            Flipbook name
+        </label>
+
+        <input
+            type="text"
+            id="flipbookTitleInput"
+            maxlength="120"
+            placeholder="Enter the name to show at the top"
+            value="My Flipbook"
+        >
+    </div>
+
 
     <label
         for="pdfInput"
@@ -215,6 +229,9 @@
 
     const fileName =
         document.getElementById("fileName");
+
+    const flipbookTitleInput =
+        document.getElementById("flipbookTitleInput");
 
     const progressText =
         document.getElementById("progressText");
@@ -366,9 +383,17 @@
             const formData =
                 new FormData();
 
+            const customTitle =
+                (flipbookTitleInput.value || "").trim();
+
             formData.append(
                 "file",
                 file
+            );
+
+            formData.append(
+                "title",
+                customTitle
             );
 
 
@@ -576,8 +601,15 @@
             downloadFlipbook.textContent =
                 "Preparing Download...";
             downloadFlipbook.disabled = true;
+            resultInfo.textContent = "Generating flipbook...";
 
             try {
+
+                await new Promise(
+                    function (resolve) {
+                        requestAnimationFrame(resolve);
+                    }
+                );
 
                 const response =
                     await fetch(
@@ -594,6 +626,8 @@
 
                 }
 
+                resultInfo.textContent = "Preparing ZIP package...";
+
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const anchor = document.createElement("a");
@@ -608,6 +642,7 @@
                 window.URL.revokeObjectURL(url);
 
                 downloadFlipbook.textContent = "Downloading...";
+                resultInfo.textContent = "Your flipbook package is ready!";
 
                 setTimeout(() => {
                     downloadFlipbook.textContent = originalText;

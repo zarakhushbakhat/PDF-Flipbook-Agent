@@ -33,10 +33,111 @@ let totalPages = 0;
 
 let currentPage = 1;
 
-let zoomLevel = 1;
+let zoomLevel = 1.0;
 
 let isReady = false;
 
+let isPageTurning = false;
+
+// ============================================================
+// PAGE TURN SOUND
+// ============================================================
+
+const pageTurnSound =
+    new Audio(
+        window.FLIPBOOK_SOUND_URL ||
+        "sounds/page-turn.mp3"
+    );
+
+pageTurnSound.preload = "auto";
+pageTurnSound.volume = 0.45;
+
+let pageTurnSoundUnlocked = false;
+
+let pageTurnSoundTimer = null;
+
+
+function unlockPageTurnSound() {
+
+    if (pageTurnSoundUnlocked) {
+        return;
+    }
+
+    pageTurnSound.muted = true;
+
+    pageTurnSound.play().then(
+        function () {
+            pageTurnSound.pause();
+            pageTurnSound.currentTime = 0;
+            pageTurnSound.muted = false;
+            pageTurnSoundUnlocked = true;
+        }
+    ).catch(
+        function (error) {
+            console.warn(
+                "Page-turn sound could not be unlocked:",
+                error
+            );
+            pageTurnSound.muted = false;
+        }
+    );
+
+}
+
+
+// Play page-turn sound
+function playPageTurnSound() {
+
+    try {
+
+        pageTurnSound.currentTime = 0;
+
+        pageTurnSound.play().catch(
+            function (error) {
+
+                console.warn(
+                    "Page-turn sound could not play:",
+                    error
+                );
+
+            }
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Page-turn sound error:",
+            error
+        );
+
+    }
+
+}
+
+
+function schedulePageTurnSound() {
+
+    clearTimeout(pageTurnSoundTimer);
+
+    pageTurnSoundTimer = setTimeout(
+        playPageTurnSound,
+        140
+    );
+
+}
+
+
+document.addEventListener(
+    "pointerdown",
+    unlockPageTurnSound,
+    { once: true, passive: true }
+);
+
+document.addEventListener(
+    "keydown",
+    unlockPageTurnSound,
+    { once: true, passive: true }
+);
 
 // ============================================================
 // PROGRESSIVE LOADING SETTINGS
@@ -208,7 +309,8 @@ async function loadFlipbookData() {
         flipbookData = {
             success: true,
             job_id: "local",
-            pages: localPageList
+            pages: localPageList,
+            ...(window.FLIPBOOK_DATA || {})
         };
 
         pages = localPageList;
@@ -662,16 +764,9 @@ function loadPageImage(pageNumber) {
             // Already loading
             // ------------------------------------------------
 
-            if (
-                loadingPages.has(
-                    pageNumber
-                )
-            ) {
-
+            if (loadingPages.has(pageNumber)) {
                 resolve(false);
-
                 return;
-
             }
 
 
@@ -823,6 +918,29 @@ function loadPageImage(pageNumber) {
 
         }
     );
+
+}
+
+
+async function ensurePageLoaded(pageNumber) {
+
+    if (loadedPages.has(pageNumber)) {
+        return true;
+    }
+
+    if (!loadingPages.has(pageNumber)) {
+        loadPageImage(pageNumber);
+    }
+
+    while (loadingPages.has(pageNumber)) {
+        await new Promise(
+            function (resolve) {
+                setTimeout(resolve, 25);
+            }
+        );
+    }
+
+    return loadedPages.has(pageNumber);
 
 }
 
@@ -1037,15 +1155,18 @@ function calculateBookSize() {
 
     if (!viewer) {
 
+        const fallbackAspectRatio = getBookAspectRatio();
+        const fallbackPageWidth = 700;
+
         return {
 
-            width: 1120,
+            width: fallbackPageWidth * 2,
 
-            height: 792,
+            height: Math.floor(fallbackPageWidth / fallbackAspectRatio),
 
-            pageWidth: 560,
+            pageWidth: fallbackPageWidth,
 
-            pageHeight: 792
+            pageHeight: Math.floor(fallbackPageWidth / fallbackAspectRatio)
 
         };
 
@@ -1061,25 +1182,21 @@ function calculateBookSize() {
 
 
     // --------------------------------------------------------
-    // Maximum displayed page width
-    // --------------------------------------------------------
+    const aspectRatio = getBookAspectRatio();
 
     let pageWidth =
         Math.min(
-            560,
+            700,
             Math.floor(
-                availableWidth * 0.40
+                availableWidth * 0.46
             )
         );
 
 
     // --------------------------------------------------------
-    // A4 ratio
-    // --------------------------------------------------------
-
     let pageHeight =
         Math.floor(
-            pageWidth * 1.414
+            pageWidth / aspectRatio
         );
 
 
@@ -1089,7 +1206,7 @@ function calculateBookSize() {
 
     const maxHeight =
         Math.floor(
-            availableHeight * 0.82
+            availableHeight * 0.92
         );
 
 
@@ -1104,24 +1221,14 @@ function calculateBookSize() {
 
         pageWidth =
             Math.floor(
-                pageHeight / 1.414
+                pageHeight * aspectRatio
             );
 
     }
 
 
-    pageWidth =
-        Math.max(
-            260,
-            pageWidth
-        );
-
-
-    pageHeight =
-        Math.max(
-            370,
-            pageHeight
-        );
+    pageWidth = Math.max(1, pageWidth);
+    pageHeight = Math.max(1, Math.floor(pageWidth / aspectRatio));
 
 
     return {
@@ -1139,6 +1246,21 @@ function calculateBookSize() {
             pageHeight
 
     };
+
+}
+
+
+function getBookAspectRatio() {
+
+    const aspectRatio = Number(
+        flipbookData && flipbookData.aspect_ratio
+    );
+
+    if (Number.isFinite(aspectRatio) && aspectRatio > 0) {
+        return aspectRatio;
+    }
+
+    return 1 / 1.414;
 
 }
 
@@ -1221,10 +1343,10 @@ function initializeTurnJS() {
                 true,
 
             duration:
-                900,
+                1100,
 
             acceleration:
-                true,
+                false,
 
             gradients:
                 true,
@@ -1251,11 +1373,17 @@ function initializeTurnJS() {
                         page
                     ) {
 
+                        isPageTurning = true;
+
                         const visiblePage =
                             Math.min(
                                 page,
                                 totalPages
                             );
+
+                        if (visiblePage !== currentPage) {
+                            schedulePageTurnSound();
+                        }
 
 
                         updatePageCounter(
@@ -1293,12 +1421,13 @@ function initializeTurnJS() {
                         page
                     ) {
 
+                        isPageTurning = false;
+
                         const visiblePage =
                             Math.min(
                                 page,
                                 totalPages
                             );
-
 
                         updatePageCounter(
                             visiblePage
@@ -1498,7 +1627,7 @@ function hideLoading() {
 
 function nextPage() {
 
-    if (!isReady) {
+    if (!isReady || isPageTurning) {
         return;
     }
 
@@ -1513,9 +1642,7 @@ function nextPage() {
     }
 
 
-    $(book).turn(
-        "next"
-    );
+    turnAfterLoading(currentPage + 1, "next");
 
 }
 
@@ -1526,7 +1653,7 @@ function nextPage() {
 
 function previousPage() {
 
-    if (!isReady) {
+    if (!isReady || isPageTurning) {
         return;
     }
 
@@ -1540,9 +1667,7 @@ function previousPage() {
     }
 
 
-    $(book).turn(
-        "previous"
-    );
+    turnAfterLoading(currentPage - 1, "previous");
 
 }
 
@@ -1553,15 +1678,12 @@ function previousPage() {
 
 function goToFirstPage() {
 
-    if (!isReady) {
+    if (!isReady || isPageTurning) {
         return;
     }
 
 
-    $(book).turn(
-        "page",
-        1
-    );
+    turnAfterLoading(1, "page", 1);
 
 }
 
@@ -1572,15 +1694,12 @@ function goToFirstPage() {
 
 function goToLastPage() {
 
-    if (!isReady) {
+    if (!isReady || isPageTurning) {
         return;
     }
 
 
-    $(book).turn(
-        "page",
-        totalPages
-    );
+    turnAfterLoading(totalPages, "page", totalPages);
 
 
     // Make sure the last page starts loading.
@@ -1588,6 +1707,30 @@ function goToLastPage() {
     loadPageImage(
         totalPages
     );
+
+}
+
+
+async function turnAfterLoading(pageNumber, action, actionPage) {
+
+    if (isPageTurning) {
+        return;
+    }
+
+    isPageTurning = true;
+
+    const loaded = await ensurePageLoaded(pageNumber);
+
+    if (!loaded) {
+        isPageTurning = false;
+        return;
+    }
+
+    if (actionPage === undefined) {
+        $(book).turn(action);
+    } else {
+        $(book).turn(action, actionPage);
+    }
 
 }
 
@@ -1747,7 +1890,7 @@ if (elementExists(zoomIn)) {
             zoomLevel =
                 Math.min(
                     zoomLevel + 0.1,
-                    1.8
+                    3
                 );
 
 
@@ -1795,11 +1938,11 @@ if (bookStage) {
         function () {
 
             if (
-                zoomLevel === 1
+                zoomLevel <= 1.5
             ) {
 
                 zoomLevel =
-                    1.5;
+                    1.8;
 
             } else {
 
@@ -2127,6 +2270,7 @@ async function initializeFlipbook() {
     // --------------------------------------------------------
 
     initializeTurnJS();
+    updateZoom();
 
 }
 
