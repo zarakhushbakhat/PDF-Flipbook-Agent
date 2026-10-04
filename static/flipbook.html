@@ -4,7 +4,6 @@
 
 <head>
 
-```
 <meta charset="UTF-8">
 
 <meta
@@ -16,15 +15,13 @@
 
 <link
     rel="stylesheet"
-    href="/static/css/style.css"
+    href="/static/css/style.css?v=4"
 >
-```
 
 </head>
 
 <body>
 
-```
 <!-- =====================================================
      TOP BAR
 ====================================================== -->
@@ -33,18 +30,39 @@
 
     <div class="brand">
 
-        <span class="brand-icon">
-            📖
-        </span>
+        <img id="brandLogo" class="brand-logo hidden" alt="Brand logo">
 
-        <span id="bookTitle">
-            Flipbook
-        </span>
+        <div class="brand-text">
+            <span id="bookTitle">
+                Flipbook
+            </span>
+            <span id="bookSubtitle" class="brand-subtitle"></span>
+        </div>
 
     </div>
 
+    <div class="top-actions top-actions-right">
 
-    <div class="top-actions">
+        <button
+            id="thumbnailsButton"
+            class="tool-button"
+            title="Show page thumbnails"
+            aria-label="Show page thumbnails"
+            aria-expanded="false"
+        >
+            ▤
+        </button>
+
+        <button
+            id="customizeButton"
+            class="tool-button tool-button-text"
+            title="Customize flipbook"
+            aria-label="Customize flipbook"
+            aria-expanded="false"
+            type="button"
+        >
+            Customize
+        </button>
 
         <button
             id="zoomOut"
@@ -81,6 +99,34 @@
         </button>
 
         <button
+            id="searchButton"
+            class="tool-button"
+            title="Search PDF text"
+            aria-label="Search PDF text"
+            aria-expanded="false"
+        >
+            ⌕
+        </button>
+
+        <button
+            id="shareButton"
+            class="tool-button"
+            title="Copy share link"
+            aria-label="Copy share link"
+        >
+            ↗
+        </button>
+
+        <a
+            id="downloadButton"
+            class="tool-button tool-link"
+            title="Download flipbook"
+            aria-label="Download flipbook"
+        >
+            ↓
+        </a>
+
+        <button
             id="fullscreenButton"
             class="tool-button"
             title="Fullscreen"
@@ -92,6 +138,147 @@
 
 </header>
 
+
+<aside
+    id="thumbnailSidebar"
+    class="thumbnail-sidebar"
+    aria-label="PDF page thumbnails"
+    aria-hidden="true"
+>
+    <div class="sidebar-heading">
+        <span>Pages</span>
+        <button id="closeThumbnailsButton" class="panel-close" type="button" aria-label="Close thumbnails">×</button>
+    </div>
+    <div id="thumbnailList" class="thumbnail-list"></div>
+    <div
+        id="thumbnailSidebarResizeHandle"
+        class="sidebar-resize-handle"
+        role="separator"
+        aria-label="Resize page thumbnails"
+        aria-orientation="vertical"
+        aria-valuemin="220"
+        aria-valuemax="560"
+        aria-valuenow="300"
+        tabindex="0"
+    ></div>
+</aside>
+
+<button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Close page thumbnails" tabindex="-1"></button>
+
+<section id="searchPanel" class="search-panel" aria-label="Search PDF text" hidden>
+    <form id="searchForm" class="search-form">
+        <label class="visually-hidden" for="searchInput">Search PDF text</label>
+        <input id="searchInput" type="search" placeholder="Search this PDF" autocomplete="off">
+        <button class="search-submit" type="submit" aria-label="Search">⌕</button>
+    </form>
+    <div class="search-summary" id="searchSummary" role="status" aria-live="polite">Enter a word or phrase.</div>
+    <div class="search-result-controls">
+        <button id="previousResultButton" type="button" title="Previous result" disabled>↑</button>
+        <button id="nextResultButton" type="button" title="Next result" disabled>↓</button>
+    </div>
+    <ol id="searchResults" class="search-results"></ol>
+</section>
+
+<aside id="customizePanel" class="customize-panel" aria-label="Customize flipbook" hidden>
+    <div class="panel-header">
+        <h2>Customize Flipbook</h2>
+        <button id="closeCustomizeButton" class="panel-close" type="button" aria-label="Close customization panel">×</button>
+    </div>
+
+    <form id="customizeForm" class="customize-form">
+        <fieldset>
+            <legend>Theme</legend>
+            <label><input type="radio" name="theme" value="classic" checked> Classic</label>
+            <label><input type="radio" name="theme" value="minimal"> Minimal</label>
+            <label><input type="radio" name="theme" value="magazine"> Magazine</label>
+            <label><input type="radio" name="theme" value="dark"> Dark</label>
+        </fieldset>
+
+        <fieldset>
+            <legend>Appearance</legend>
+            <label><input type="radio" name="mode" value="light" checked> Light</label>
+            <label><input type="radio" name="mode" value="dark"> Dark</label>
+        </fieldset>
+
+        <div class="form-row">
+            <label for="backgroundColorInput">Background color</label>
+            <input id="backgroundColorInput" name="backgroundColor" type="color" value="#f3f3f3">
+        </div>
+
+        <div class="form-row">
+            <label for="backgroundImageInput">Background image</label>
+            <input id="backgroundImageInput" name="backgroundImage" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+        </div>
+
+        <div class="checkbox-row">
+            <label><input id="removeBackgroundCheckbox" type="checkbox"> Remove background image</label>
+        </div>
+
+        <div class="form-row">
+            <label for="companyNameInput">Company name</label>
+            <input id="companyNameInput" name="companyName" type="text" maxlength="120" placeholder="My Company">
+        </div>
+
+        <div class="form-row">
+            <label for="logoInput">Logo upload</label>
+            <input id="logoInput" name="logo" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+        </div>
+
+        <div class="checkbox-row">
+            <label><input id="removeLogoCheckbox" type="checkbox"> Remove logo</label>
+        </div>
+
+        <div class="form-row">
+            <label for="titleInput">Flipbook title</label>
+            <input id="titleInput" name="title" type="text" maxlength="120" placeholder="My Flipbook">
+        </div>
+
+        <div class="form-row">
+            <label for="subtitleInput">Subtitle</label>
+            <input id="subtitleInput" name="subtitle" type="text" maxlength="120" placeholder="2026 Edition">
+        </div>
+
+        <fieldset>
+            <legend>Page effects</legend>
+            <label class="checkbox-row"><input id="pageShadowCheckbox" name="pageShadow" type="checkbox" checked> Page shadow</label>
+            <label class="checkbox-row"><input id="pageTurnSoundCheckbox" name="pageTurnSound" type="checkbox"> Page-turn sound</label>
+        </fieldset>
+
+        <fieldset>
+            <legend>Toolbar</legend>
+            <label class="checkbox-row"><input id="showSearchCheckbox" name="showSearch" type="checkbox" checked> Search</label>
+            <label class="checkbox-row"><input id="showThumbnailsCheckbox" name="showThumbnails" type="checkbox" checked> Thumbnails</label>
+            <label class="checkbox-row"><input id="showZoomCheckbox" name="showZoom" type="checkbox" checked> Zoom</label>
+            <label class="checkbox-row"><input id="showFullscreenCheckbox" name="showFullscreen" type="checkbox" checked> Fullscreen</label>
+            <label class="checkbox-row"><input id="showShareCheckbox" name="showShare" type="checkbox" checked> Share</label>
+            <label class="checkbox-row"><input id="showDownloadCheckbox" name="showDownload" type="checkbox" checked> Download</label>
+        </fieldset>
+
+        <div class="form-row inline-color-row">
+            <label for="accentColorInput">Accent color</label>
+            <input id="accentColorInput" name="accentColor" type="color" value="#2d3748">
+        </div>
+
+        <div class="form-row inline-color-row">
+            <label for="toolbarColorInput">Toolbar color</label>
+            <input id="toolbarColorInput" name="toolbarColor" type="color" value="#ffffff">
+        </div>
+
+        <div class="form-row inline-color-row">
+            <label for="viewerBackgroundInput">Viewer background</label>
+            <input id="viewerBackgroundInput" name="viewerBackground" type="color" value="#f8f8f8">
+        </div>
+
+        <div class="toolbar-position-note">Toolbar position: fixed at top for stability on mobile and desktop.</div>
+
+        <div class="panel-actions">
+            <button id="resetSettingsButton" class="secondary-button" type="button">Reset to Default</button>
+            <button id="saveSettingsButton" class="primary-button" type="submit">Save</button>
+        </div>
+    </form>
+</aside>
+
+<button id="customizeBackdrop" class="customize-backdrop" type="button" aria-label="Close customization panel" tabindex="-1"></button>
 
 <!-- =====================================================
      VIEWER
@@ -240,9 +427,8 @@
 ====================================================== -->
 
 <script
-    src="/static/js/flipbook.js"
+    src="/static/js/flipbook.js?v=7"
 ></script>
-```
 
 </body>
 

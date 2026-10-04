@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,6 +14,8 @@ from collections import Counter
 from pathlib import Path
 
 import pymupdf
+import pytesseract
+from PIL import Image
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -29,10 +32,12 @@ STATIC_DIR = BASE_DIR / "static"
 for directory in (UPLOAD_DIR, GENERATED_DIR, TEMP_DIR, TEMPLATES_DIR, STATIC_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
-PDF_DPI = 600
+PDF_DPI = 800
+OCR_DPI = 240
+OCR_LANGUAGE = "eng"
 MAX_FILE_SIZE = 100 * 1024 * 1024
 VALID_JOB_ID_PATTERN = re.compile(r"^[a-fA-F0-9]{32}$")
-WEBP_QUALITY = 98
+WEBP_QUALITY = 99
 
 app = FastAPI(
     title="PDF Flipbook Agent",
@@ -51,6 +56,157 @@ async def startup_event():
 
 def get_job_directory(job_id: str) -> Path:
     return GENERATED_DIR / job_id
+
+
+DEFAULT_FLIPBOOK_SETTINGS = {
+    "theme": "classic",
+    "mode": "light",
+    "backgroundColor": "#f3f3f3",
+    "viewerBackground": "#f8f8f8",
+    "toolbarColor": "#ffffff",
+    "accentColor": "#2d3748",
+    "title": "",
+    "subtitle": "",
+    "companyName": "",
+    "showLogo": False,
+    "logo": "",
+    "backgroundImage": "",
+    "showSearch": True,
+    "showThumbnails": True,
+    "showZoom": True,
+    "showFullscreen": True,
+    "showShare": True,
+    "showDownload": True,
+    "pageShadow": True,
+    "pageTurnSound": False,
+    "toolbarPosition": "top",
+}
+
+ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_BRAND_IMAGE_SIZE = 5 * 1024 * 1024
+
+
+def sanitize_custom_text(value, max_length: int = 180) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\x00", "").strip()
+    if len(text) > max_length:
+        text = text[:max_length]
+    return text
+
+
+def safe_asset_name(filename: str | None) -> str:
+    if not filename:
+        raise ValueError("No file name was provided.")
+    sanitized_name = Path(filename).name
+    if not sanitized_name or sanitized_name in {".", ".."}:
+        raise ValueError("The uploaded file name is invalid.")
+    if sanitized_name.startswith("/") or sanitized_name.startswith("\\"):
+        raise ValueError("Invalid uploaded file path.")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", sanitized_name)
+    if not safe_name or safe_name in {".", ".."}:
+        raise ValueError("The uploaded file name is invalid.")
+    return safe_name
+
+
+def normalize_hex_color(value, fallback: str):
+    if not isinstance(value, str):
+        return fallback
+    cleaned = value.strip()
+    if not cleaned:
+        return fallback
+    if cleaned.startswith("#"):
+        cleaned = cleaned[1:]
+    if len(cleaned) != 6 or not re.fullmatch(r"[0-9a-fA-F]{6}", cleaned):
+        return fallback
+    return f"#{cleaned.lower()}"
+
+
+def normalize_bool(value, fallback: bool):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+    return fallback
+
+
+def normalize_job_settings(raw_settings: dict | None, default_title: str = "") -> dict:
+    raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
+    settings = dict(DEFAULT_FLIPBOOK_SETTINGS)
+    if default_title:
+        settings["title"] = default_title
+    settings.update({
+        "theme": raw_settings.get("theme", settings["theme"]) if raw_settings.get("theme") in {"classic", "minimal", "magazine", "dark"} else settings["theme"],
+        "mode": raw_settings.get("mode", settings["mode"]) if raw_settings.get("mode") in {"light", "dark"} else settings["mode"],
+        "backgroundColor": normalize_hex_color(raw_settings.get("backgroundColor"), settings["backgroundColor"]),
+        "viewerBackground": normalize_hex_color(raw_settings.get("viewerBackground"), settings["viewerBackground"]),
+        "toolbarColor": normalize_hex_color(raw_settings.get("toolbarColor"), settings["toolbarColor"]),
+        "accentColor": normalize_hex_color(raw_settings.get("accentColor"), settings["accentColor"]),
+        "title": sanitize_custom_text(raw_settings.get("title") or default_title or settings["title"], 120),
+        "subtitle": sanitize_custom_text(raw_settings.get("subtitle"), 120),
+        "companyName": sanitize_custom_text(raw_settings.get("companyName"), 120),
+        "showLogo": normalize_bool(raw_settings.get("showLogo"), settings["showLogo"]),
+        "logo": sanitize_custom_text(raw_settings.get("logo"), 200),
+        "backgroundImage": sanitize_custom_text(raw_settings.get("backgroundImage"), 240),
+        "showSearch": normalize_bool(raw_settings.get("showSearch"), settings["showSearch"]),
+        "showThumbnails": normalize_bool(raw_settings.get("showThumbnails"), settings["showThumbnails"]),
+        "showZoom": normalize_bool(raw_settings.get("showZoom"), settings["showZoom"]),
+        "showFullscreen": normalize_bool(raw_settings.get("showFullscreen"), settings["showFullscreen"]),
+        "showShare": normalize_bool(raw_settings.get("showShare"), settings["showShare"]),
+        "showDownload": normalize_bool(raw_settings.get("showDownload"), settings["showDownload"]),
+        "pageShadow": normalize_bool(raw_settings.get("pageShadow"), settings["pageShadow"]),
+        "pageTurnSound": normalize_bool(raw_settings.get("pageTurnSound"), settings["pageTurnSound"]),
+        "toolbarPosition": raw_settings.get("toolbarPosition", settings["toolbarPosition"]) if raw_settings.get("toolbarPosition") in {"top", "bottom"} else settings["toolbarPosition"],
+    })
+    return settings
+
+
+def write_job_settings(job_directory: Path, settings: dict):
+    settings_path = job_directory / "settings.json"
+    serialized = json.dumps(settings, ensure_ascii=False, indent=2)
+    settings_path.write_text(serialized, encoding="utf-8")
+
+
+def load_job_settings(job_id: str, default_title: str = "") -> dict:
+    settings_path = get_job_directory(job_id) / "settings.json"
+    defaults = normalize_job_settings({}, default_title)
+    if not settings_path.exists():
+        return defaults
+    try:
+        payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return defaults
+    return normalize_job_settings(payload, default_title or defaults["title"])
+
+
+async def save_uploaded_asset(file: UploadFile | None, destination: Path, max_size: int = MAX_BRAND_IMAGE_SIZE):
+    if file is None:
+        return None
+    if file.filename is None:
+        raise ValueError("The uploaded file is missing a valid name.")
+    file_name = safe_asset_name(file.filename)
+    file_suffix = Path(file_name).suffix.lower()
+    if file_suffix not in ALLOWED_IMAGE_SUFFIXES:
+        raise ValueError("Only PNG, JPG, JPEG, and WEBP files are allowed for branding assets.")
+    destination = destination.with_name(file_name)
+    total_size = 0
+    try:
+        with open(destination, "wb") as output_file:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_size:
+                    raise ValueError("The uploaded image exceeds the maximum allowed size of 5 MB.")
+                output_file.write(chunk)
+        return destination
+    finally:
+        await file.close()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -170,6 +326,125 @@ def render_pdf_pages(pdf_path: Path, output_directory: Path):
             document.close()
 
 
+def configure_tesseract():
+    configured_path = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
+    if configured_path:
+            pytesseract.pytesseract.tesseract_cmd = configured_path
+    elif os.name == "nt":
+            common_path = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Tesseract-OCR" / "tesseract.exe"
+            if common_path.is_file():
+                pytesseract.pytesseract.tesseract_cmd = str(common_path)
+
+
+def get_ocr_engine_error():
+    configure_tesseract()
+    try:
+            pytesseract.get_tesseract_version()
+    except pytesseract.TesseractNotFoundError:
+            return (
+                "Tesseract OCR is not installed or could not be found. "
+                "Install Tesseract OCR or set the TESSERACT_CMD environment variable."
+            )
+    try:
+        installed_languages = pytesseract.get_languages(config="")
+    except pytesseract.TesseractError as error:
+        return f"Tesseract could not load language data: {error}"
+    if OCR_LANGUAGE not in installed_languages:
+            return (
+                f"Tesseract language data '{OCR_LANGUAGE}' is not installed. "
+                "Install the required language data and regenerate the flipbook."
+            )
+    return None
+
+
+def recognize_image_text(image):
+    return pytesseract.image_to_string(image, lang=OCR_LANGUAGE, config="--psm 3").strip()
+
+
+def recognize_pdf_page_text(page):
+    pixmap = page.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csRGB, alpha=False)
+    try:
+            with Image.open(io.BytesIO(pixmap.tobytes("png"))) as image:
+                image.load()
+                return recognize_image_text(image)
+    finally:
+            pixmap = None
+
+
+def save_search_index(search_index: dict, output_directory: Path) -> bool:
+    try:
+            output_directory.mkdir(parents=True, exist_ok=True)
+            (output_directory / "search-index.json").write_text(
+                json.dumps(search_index, ensure_ascii=False),
+                encoding="utf-8",
+            )
+    except OSError as error:
+            print(f"Warning: Could not save PDF text search index: {error}")
+            return False
+    return search_index["has_text"]
+
+
+def create_search_index(pdf_path: Path, output_directory: Path):
+    search_index = {"has_text": False, "pages": [], "ocr_pages": 0}
+    document = None
+    ocr_engine_error = None
+    ocr_page_errors = set()
+    try:
+            document = pymupdf.open(str(pdf_path))
+            ocr_engine_error = get_ocr_engine_error()
+            for page_number in range(document.page_count):
+                page = document.load_page(page_number)
+                text = ""
+                try:
+                    text = page.get_text("text") or ""
+                    if not text.strip() and not ocr_engine_error:
+                        text = recognize_pdf_page_text(page)
+                        if text.strip():
+                            search_index["ocr_pages"] += 1
+                except Exception as error:
+                    print(f"Warning: Could not extract text from page {page_number + 1}: {error}")
+                    if not text.strip():
+                        ocr_page_errors.add(str(error))
+                search_index["pages"].append({"page": page_number + 1, "text": text})
+                search_index["has_text"] = search_index["has_text"] or bool(text.strip())
+            if ocr_engine_error:
+                search_index["ocr_error"] = ocr_engine_error
+            elif ocr_page_errors:
+                search_index["ocr_error"] = "OCR failed: " + "; ".join(sorted(ocr_page_errors))
+    except Exception as error:
+            print(f"Warning: Could not create PDF text search index: {error}")
+    finally:
+            if document is not None:
+                document.close()
+
+    return save_search_index(search_index, output_directory)
+
+
+def create_search_index_from_page_images(page_files: list[Path], output_directory: Path):
+    search_index = {"has_text": False, "pages": [], "ocr_pages": 0}
+    ocr_engine_error = get_ocr_engine_error()
+    ocr_page_errors = set()
+    for page_number, page_file in enumerate(page_files, start=1):
+            text = ""
+            if not ocr_engine_error:
+                try:
+                    with Image.open(page_file) as image:
+                        image.thumbnail((2400, 3200))
+                        text = recognize_image_text(image)
+                    if text:
+                        search_index["ocr_pages"] += 1
+                except Exception as error:
+                    print(f"Warning: Could not OCR generated page {page_number}: {error}")
+                    ocr_page_errors.add(str(error))
+            search_index["pages"].append({"page": page_number, "text": text})
+            search_index["has_text"] = search_index["has_text"] or bool(text.strip())
+    if ocr_engine_error:
+            search_index["ocr_error"] = ocr_engine_error
+    elif ocr_page_errors:
+            search_index["ocr_error"] = "OCR failed: " + "; ".join(sorted(ocr_page_errors))
+    return save_search_index(search_index, output_directory)
+
+
 async def save_uploaded_pdf(file: UploadFile, destination: Path):
     total_size = 0
     try:
@@ -286,17 +561,104 @@ def build_package_readme():
     return readme_file.read_text(encoding="utf-8")
 
 
+def remove_standalone_customization_controls(index_html: str) -> str:
+    for tag, element_id in (
+        ("button", "customizeButton"),
+        ("aside", "customizePanel"),
+        ("button", "customizeBackdrop"),
+    ):
+        pattern = (
+            rf"<{tag}\b(?=[^>]*\bid=[\"']{re.escape(element_id)}[\"'])"
+            rf"[^>]*>.*?</{tag}\s*>"
+        )
+        index_html, removed_count = re.subn(
+            pattern,
+            "",
+            index_html,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if removed_count != 1:
+            raise RuntimeError(
+                f"Expected exactly one {tag} with id '{element_id}' in the flipbook template."
+            )
+    return index_html
+
+
 def build_standalone_zip(job_id: str, page_files: list[Path], pdf_information: dict | None = None):
     local_pages = [f"pages/{page.name}" for page in page_files]
-    local_data = pdf_information or {}
+    local_data = dict(pdf_information or {})
+    local_data["job_id"] = job_id
+
+    job_directory = get_job_directory(job_id)
+    search_index_file = job_directory / "search-index.json"
+    try:
+        search_index = json.loads(search_index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        search_index = {"has_text": False, "pages": []}
+    if page_files and not search_index.get("has_text") and (
+        "ocr_pages" not in search_index or search_index.get("ocr_error")
+    ):
+        create_search_index_from_page_images(page_files, job_directory)
+        try:
+            search_index = json.loads(search_index_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            search_index = {"has_text": False, "pages": []}
+    local_data["search_index"] = search_index
+
+    settings = load_job_settings(job_id, local_data.get("title") or "Flipbook")
+    branding_files = []
+    for setting_name in ("logo", "backgroundImage"):
+        asset_url = settings.get(setting_name, "")
+        asset_prefix = f"/generated/{job_id}/"
+        if not asset_url.startswith(asset_prefix):
+            continue
+        asset_path = job_directory / Path(asset_url[len(asset_prefix):]).name
+        if asset_path.is_file():
+            asset_arcname = f"assets/branding/{asset_path.name}"
+            settings[setting_name] = asset_arcname
+            branding_files.append((asset_path, f"flipbook/{asset_arcname}"))
+        else:
+            settings[setting_name] = ""
+    local_data["settings"] = settings
+
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        index_html = f"""<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Flipbook</title><link rel=\"stylesheet\" href=\"css/style.css\"></head><body><header class=\"topbar\"><div class=\"brand\"><span class=\"brand-icon\">📖</span><span id=\"bookTitle\">Flipbook</span></div><div class=\"top-actions\"><button id=\"zoomOut\" class=\"tool-button\" title=\"Zoom out\">−</button><span id=\"zoomValue\" class=\"zoom-value\">100%</span><button id=\"zoomIn\" class=\"tool-button\" title=\"Zoom in\">+</button><button id=\"fullscreenButton\" class=\"tool-button\" title=\"Fullscreen\">⛶</button></div></header><main class=\"viewer\" id=\"viewer\"><button id=\"previousButton\" class=\"navigation-button previous\" aria-label=\"Previous page\">‹</button><div class=\"book-stage\" id=\"bookStage\"><div class=\"flipbook\" id=\"book\"></div></div><button id=\"nextButton\" class=\"navigation-button next\" aria-label=\"Next page\">›</button></main><footer class=\"controls\"><button id=\"firstButton\" class=\"control-button\" title=\"First page\">⏮</button><button id=\"previousBottom\" class=\"control-button\" title=\"Previous page\">←</button><div class=\"page-info\"><span id=\"currentPage\">1</span><span>/</span><span id=\"totalPages\">1</span></div><button id=\"nextBottom\" class=\"control-button\" title=\"Next page\">→</button><button id=\"lastButton\" class=\"control-button\" title=\"Last page\">⏭</button></footer><div id=\"loading\" class=\"loading\"><div class=\"loading-spinner\"></div><p>Preparing your flipbook...</p></div><script src=\"js/jquery.js\"></script><script src=\"js/turn.js\"></script><script>window.FLIPBOOK_LOCAL_PAGES={json.dumps(local_pages)};window.FLIPBOOK_DATA={json.dumps(local_data)};window.FLIPBOOK_SOUND_URL=\"assets/page-turn.mp3\";</script><script src=\"js/flipbook.js\"></script></body></html>"""
-        archive.writestr("flipbook/index.html", index_html + "\n")
+        index_html = (STATIC_DIR / "flipbook.html").read_text(encoding="utf-8")
+        index_html = remove_standalone_customization_controls(index_html)
+        index_html = index_html.replace(
+            'href="/static/css/style.css?v=4"',
+            'href="css/style.css"',
+        )
+        index_html = index_html.replace(
+            'src="/static/js/jquery.js"',
+            'src="js/jquery.js"',
+        )
+        index_html = index_html.replace(
+            'src="/static/js/turn.js"',
+            'src="js/turn.js"',
+        )
+        index_html = index_html.replace(
+            'src="/static/js/flipbook.js?v=7"',
+            'src="js/flipbook.js"',
+        )
+        config_script = (
+            "<script>"
+            f"window.FLIPBOOK_LOCAL_PAGES={json.dumps(local_pages)};"
+            "window.FLIPBOOK_DATA="
+            + json.dumps(local_data, ensure_ascii=False).replace("<", "\\u003c")
+            + ";"
+            'window.FLIPBOOK_SOUND_URL="assets/page-turn.mp3";'
+            "</script>"
+        )
+        index_html = index_html.replace('<script\n    src="js/jquery.js"', f"{config_script}\n<script\n    src=\"js/jquery.js\"")
+        archive.writestr("flipbook/index.html", index_html)
         archive.writestr("flipbook/css/style.css", (STATIC_DIR / "css" / "style.css").read_bytes())
         archive.writestr("flipbook/js/jquery.js", (STATIC_DIR / "js" / "jQuery.js").read_bytes())
         archive.writestr("flipbook/js/turn.js", (STATIC_DIR / "js" / "turn.js").read_bytes())
         archive.writestr("flipbook/js/flipbook.js", (STATIC_DIR / "js" / "flipbook.js").read_bytes())
+        for asset_path, asset_arcname in branding_files:
+            archive.write(asset_path, arcname=asset_arcname)
         sound_file = STATIC_DIR / "sounds" / "page-turn.mp3"
         if sound_file.exists():
             archive.write(sound_file, arcname="flipbook/assets/page-turn.mp3")
@@ -329,7 +691,10 @@ async def upload_pdf(file: UploadFile = File(...), title: str = Form(default="")
         elif not pdf_information.get("title"):
             pdf_information["title"] = "Flipbook"
         pages = render_pdf_pages(upload_path, job_directory)
+        pdf_information["text_search_available"] = create_search_index(upload_path, job_directory)
         (job_directory / "metadata.json").write_text(json.dumps(pdf_information, indent=2), encoding="utf-8")
+        default_settings = normalize_job_settings({}, pdf_information.get("title") or custom_title or "Flipbook")
+        write_job_settings(job_directory, default_settings)
         safe_delete_file(upload_path)
         upload_path = None
         return JSONResponse(content={"success": True, "job_id": job_id, "filename": original_filename, **pdf_information, "pages": pages})
@@ -361,7 +726,124 @@ async def get_flipbook_job(job_id: str):
             metadata = normalize_job_metadata(json.loads(metadata_file.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             pass
-    return JSONResponse(content={"success": True, "job_id": job_id, "page_count": len(page_files), **metadata, "pages": [f"/generated/{job_id}/{page.name}" for page in page_files]})
+    default_title = metadata.get("title") or "Flipbook"
+    job_settings = load_job_settings(job_id, default_title)
+    response = {"success": True, "job_id": job_id, "page_count": len(page_files), **metadata, "settings": job_settings, "pages": [f"/generated/{job_id}/{page.name}" for page in page_files]}
+    return JSONResponse(content=response)
+
+
+@app.get("/api/job/{job_id}/settings")
+async def get_flipbook_settings(job_id: str):
+    if not validate_job_id(job_id):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Invalid job ID."})
+    job_directory = get_job_directory(job_id)
+    if not job_directory.exists():
+        return JSONResponse(status_code=404, content={"success": False, "message": "Flipbook not found."})
+    metadata = {}
+    metadata_file = job_directory / "metadata.json"
+    if metadata_file.exists():
+        try:
+            metadata = normalize_job_metadata(json.loads(metadata_file.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+    settings = load_job_settings(job_id, metadata.get("title") or "Flipbook")
+    return JSONResponse(content={"success": True, "job_id": job_id, "settings": settings})
+
+
+@app.post("/api/job/{job_id}/settings")
+async def save_flipbook_settings(
+    job_id: str,
+    settings: str = Form(default="{}"),
+    logo: UploadFile | None = File(default=None),
+    background: UploadFile | None = File(default=None),
+):
+    if not validate_job_id(job_id):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Invalid job ID."})
+    job_directory = get_job_directory(job_id)
+    if not job_directory.exists():
+        return JSONResponse(status_code=404, content={"success": False, "message": "Flipbook not found."})
+
+    try:
+        payload = json.loads(settings or "{}")
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Settings data is not valid JSON."})
+
+    metadata = {}
+    metadata_file = job_directory / "metadata.json"
+    if metadata_file.exists():
+        try:
+            metadata = normalize_job_metadata(json.loads(metadata_file.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+
+    current_settings = load_job_settings(job_id, metadata.get("title") or "Flipbook")
+    merged_settings = normalize_job_settings(payload, metadata.get("title") or "Flipbook")
+    merged_settings = {**current_settings, **merged_settings}
+
+    try:
+        if logo is not None:
+            saved_logo_path = await save_uploaded_asset(logo, job_directory / "logo")
+            if saved_logo_path is not None:
+                merged_settings["logo"] = f"/generated/{job_id}/{saved_logo_path.name}"
+                merged_settings["showLogo"] = True
+        elif bool(payload.get("removeLogo")):
+            merged_settings["logo"] = ""
+            merged_settings["showLogo"] = False
+
+        if background is not None:
+            saved_background_path = await save_uploaded_asset(background, job_directory / "background")
+            if saved_background_path is not None:
+                merged_settings["backgroundImage"] = f"/generated/{job_id}/{saved_background_path.name}"
+        elif bool(payload.get("removeBackground")):
+            merged_settings["backgroundImage"] = ""
+
+        if payload.get("title") is not None:
+            merged_settings["title"] = sanitize_custom_text(payload.get("title"), 120)
+        if payload.get("subtitle") is not None:
+            merged_settings["subtitle"] = sanitize_custom_text(payload.get("subtitle"), 120)
+        if payload.get("companyName") is not None:
+            merged_settings["companyName"] = sanitize_custom_text(payload.get("companyName"), 120)
+
+        merged_settings = normalize_job_settings(merged_settings, metadata.get("title") or "Flipbook")
+        write_job_settings(job_directory, merged_settings)
+        return JSONResponse(content={"success": True, "job_id": job_id, "settings": merged_settings})
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"success": False, "message": str(error)})
+    except Exception as error:
+        print("Custom settings error:", repr(error))
+        return JSONResponse(status_code=500, content={"success": False, "message": "Could not save these customization settings.", "error": str(error)})
+
+
+@app.get("/api/job/{job_id}/search-index")
+async def get_flipbook_search_index(job_id: str):
+    if not validate_job_id(job_id):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Invalid job ID."})
+    job_directory = get_job_directory(job_id)
+    index_file = job_directory / "search-index.json"
+    page_files = sorted(job_directory.glob("page-*.webp"))
+    if not index_file.is_file() and not page_files:
+        return JSONResponse(status_code=404, content={"success": False, "message": "Search data is not available for this flipbook."})
+    try:
+        search_index = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        search_index = {"has_text": False, "pages": []}
+    if (
+        not search_index.get("has_text")
+        and ("ocr_pages" not in search_index or search_index.get("ocr_error"))
+    ):
+        if page_files:
+            await asyncio.to_thread(
+                create_search_index_from_page_images,
+                page_files,
+                job_directory,
+            )
+            try:
+                search_index = json.loads(index_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return JSONResponse(status_code=500, content={"success": False, "message": "OCR search data could not be loaded."})
+    elif not index_file.is_file():
+        return JSONResponse(status_code=500, content={"success": False, "message": "Search data could not be created for this flipbook."})
+    return JSONResponse(content=search_index)
 
 
 @app.get("/api/job/{job_id}/download")
